@@ -7,7 +7,7 @@
 
 // Déclarations des fonctions de scheduling
 void scheduler_fifo(Process procs[], int count);
-void scheduler_rr(Process procs[], int count);
+void scheduler_rr(Process procs[], int count, int quantum);
 void scheduler_priority(Process procs[], int count);
 void scheduler_multi_level(Process procs[], int count);
 
@@ -42,28 +42,34 @@ int choisir_politique() {
 
 // Fonction pour exécuter la politique choisie
 void executer_politique(int choix, Process procs[], int count) {
-    printf("\n=== Exécution de la politique choisie ===\n");
-    
-    switch(choix) {
+
+    switch (choix) {
         case 1:
-            printf("Politique sélectionnée: FIFO\n");
             scheduler_fifo(procs, count);
             break;
-        case 2:
-            printf("Politique sélectionnée: Round Robin\n");
-            scheduler_rr(procs, count);
+
+        case 2: {
+            int q;
+            printf("Vous avez choisi Round Robin.\n");
+            printf("➡ Entrez le quantum : ");
+            scanf("%d", &q);
+
+            if (q <= 0) q = 1;
+
+            scheduler_rr(procs, count, q);
             break;
+        }
+
         case 3:
-            printf("Politique sélectionnée: Priorité Préemptive\n");
             scheduler_priority(procs, count);
             break;
+
         case 4:
-            printf("Politique sélectionnée: Multi-Level avec Fatigue CPU\n");
             scheduler_multi_level(procs, count);
             break;
+
         default:
-            // Ce cas ne devrait normalement pas se produire
-            printf("Choix invalide! Utilisation de FIFO par défaut.\n");
-            scheduler_fifo(procs, count);
+            printf("Choix invalide.\n");
     }
+
 }
