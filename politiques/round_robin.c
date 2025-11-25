@@ -1,8 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include "../src/process.h"
+#include "process.h"
 
-void scheduler_rr(Process procs[], int n, int QUANTUM) {
+void round_robin(Process procs[], int n, int QUANTUM) {
 
     printf("\n═══════════════════════════════════════════════════\n");
     printf("                 ROUND ROBIN (q=%d)\n", QUANTUM);
@@ -111,4 +111,6 @@ void scheduler_rr(Process procs[], int n, int QUANTUM) {
                start[i], end[i], turn, wait);
     }
     printf("└──────┴─────────┴───────┴─────────┴───────┴────────────┴─────────┘\n\n");
+     printf("Temps de rotation moyen: %.2f\n", sumT / n);
+    printf("Temps d'attente moyen:   %.2f\n\n", sumW / n);
 }
