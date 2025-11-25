@@ -1,10 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include "../src/process.h"
+#include "process.h"
 
 // FIFO = First Come First Served (pas de préemption)
 
-void scheduler_fifo(Process procs[], int n) {
+void fifo(Process procs[], int n) {
 
     printf("\n═══════════════════════════════════════════════════\n");
     printf("                 ORDONNANCEMENT FIFO\n");
