@@ -2,74 +2,158 @@
 #include <stdlib.h>
 #include <string.h>
 #include <dirent.h>
+#include <dlfcn.h>
 #include "menu.h"
 #include "process.h"
 
-// Déclarations des fonctions de scheduling
-void scheduler_fifo(Process procs[], int count);
-void scheduler_rr(Process procs[], int count, int quantum);
-void scheduler_priority(Process procs[], int count);
-void scheduler_multi_level(Process procs[], int count);
+#define MAX_POLITIQUES 100
 
+char politiques[MAX_POLITIQUES][200];
+int politique_count = 0;
+
+/* -----------------------------------------
+   Charger dynamiquement la liste des .c
+------------------------------------------ */
+void charger_politiques() {
+    DIR *dir = opendir("politiques");
+    if (!dir) {
+        printf("Erreur : impossible d'ouvrir le dossier 'politiques'\n");
+        exit(1);
+    }
+
+    struct dirent *entry;
+    politique_count = 0;
+
+    while ((entry = readdir(dir)) != NULL) {
+
+        // Ignorer . et ..
+        if (strcmp(entry->d_name, ".") == 0 ||
+            strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        // Ne garder que les .c
+        int len = strlen(entry->d_name);
+        if (len < 3 || strcmp(entry->d_name + len - 2, ".c") != 0)
+            continue;
+
+        // Ajouter
+        strcpy(politiques[politique_count], entry->d_name);
+        politique_count++;
+    }
+
+    closedir(dir);
+}
+
+/* -----------------------------------------
+   Afficher les politiques disponibles
+------------------------------------------ */
 void afficher_policies() {
-    printf("\n=== Politiques disponibles ===\n");
-    printf("1. FIFO (First-In-First-Out)\n");
-    printf("2. Round Robin\n");
-    printf("3. Priorité Préemptive\n");
-    printf("4. Multi-Level avec Fatigue CPU\n");
+    charger_politiques();
+
+    printf("\n=== Politiques détectées dans /politiques ===\n");
+
+    for (int i = 0; i < politique_count; i++) {
+        printf("%d. %s\n", i + 1, politiques[i]);
+    }
 }
 
+/* -----------------------------------------
+   Choisir une politique
+------------------------------------------ */
 int choisir_politique() {
+    char input[50];
     int choix;
-    char input[100];
-    
-    printf("\nChoisissez une politique (1-4) [1=FIFO par défaut]: ");
-    
-    // Lire l'entrée comme chaîne de caractères
-    if (fgets(input, sizeof(input), stdin) != NULL) {
-        // Convertir en entier
-        if (sscanf(input, "%d", &choix) == 1) {
-            if (choix >= 1 && choix <= 4) {
-                return choix;
-            }
-        }
+
+    printf("\nChoisissez une politique : ");
+    fgets(input, sizeof(input), stdin);
+
+    if (sscanf(input, "%d", &choix) != 1 || choix < 1 || choix > politique_count) {
+        printf("Choix invalide.\n");
+        exit(1);
     }
-    
-    // Si entrée invalide, retourner une valeur par défaut
-    printf("Choix invalide! Utilisation de FIFO par défaut.\n");
-    return 1;
+
+    return choix - 1; // index réel
 }
 
-// Fonction pour exécuter la politique choisie
-void executer_politique(int choix, Process procs[], int count) {
+/* -----------------------------------------
+   Exécuter la politique choisie
+------------------------------------------ */
+void executer_politique(int index, Process procs[], int count) {
 
-    switch (choix) {
-        case 1:
-            scheduler_fifo(procs, count);
-            break;
+    char path[300];
+    char lib[300];
 
-        case 2: {
-            int q;
-            printf("Vous avez choisi Round Robin.\n");
-            printf("➡ Entrez le quantum : ");
-            scanf("%d", &q);
+    // Ex : "politiques/fifo.c"
+    snprintf(path, sizeof(path), "politiques/%s", politiques[index]);
 
-            if (q <= 0) q = 1;
+    // Ex : "politiques/fifo.c.so"
+    snprintf(lib, sizeof(lib), "politiques/%s.so", politiques[index]);
 
-            scheduler_rr(procs, count, q);
-            break;
-        }
+    // Nettoyer les anciens .so
+    remove(lib);
 
-        case 3:
-            scheduler_priority(procs, count);
-            break;
+    // Compilation dynamique
+    char cmd[800];
+    snprintf(cmd, sizeof(cmd),
+             "gcc -shared -fPIC -Isrc %s -o %s",
+             path, lib);
 
-        case 4:
-            scheduler_multi_level(procs, count);
-            break;
+    system(cmd);
 
-        default:
-            printf("Choix invalide.\n");
+    // Charger la bibliothèque
+    void *handle = dlopen(lib, RTLD_NOW);
+    if (!handle) {
+        printf("Erreur dlopen: %s\n", dlerror());
+        exit(1);
     }
 
+    // Nom de la fonction = nom du fichier sans .c
+    char func_name[200];
+    strcpy(func_name, politiques[index]);
+    func_name[strlen(func_name) - 2] = '\0'; // enlever ".c"
+
+    printf("\n>>> Exécution de : %s\n", func_name);
+
+    /* ----------------------------
+       Cas particulier Round Robin
+       Fonction = round_robin(procs, count, quantum)
+    ----------------------------- */
+    if (strcmp(func_name, "round_robin") == 0) {
+
+        int q;
+        printf("➡ Vous avez choisi Round Robin.\n");
+        printf("➡ Entrez le quantum : ");
+        scanf("%d", &q);
+        getchar(); // vider buffer
+
+        if (q <= 0) q = 1;
+
+        // Charger la fonction RR
+        void (*rr_func)(Process*, int, int) = dlsym(handle, func_name);
+
+        if (!rr_func) {
+            printf("Erreur dlsym: %s\n", dlerror());
+            exit(1);
+        }
+
+        // Exécuter
+        rr_func(procs, count, q);
+    }
+
+    /* ----------------------------
+       Autres politiques
+       Fonction = fifo(procs, count)
+    ----------------------------- */
+    else {
+        void (*alg_func)(Process*, int) = dlsym(handle, func_name);
+
+        if (!alg_func) {
+            printf("Erreur dlsym: %s\n", dlerror());
+            exit(1);
+        }
+
+        alg_func(procs, count);
+    }
+
+    dlclose(handle);
 }
