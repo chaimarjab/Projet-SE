@@ -1,8 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "../src/process.h"
-
+#include "process.h"
 #define MAX_PRIO 6
 #define FAMINE_THRESHOLD 6
 #define FATIGUE_THRESHOLD 3
@@ -147,7 +146,7 @@ void print_queues(State *s, Process procs[]) {
     printf("]\n");
 }
 
-void scheduler_multi_level(Process procs[], int n) {
+void multi_level(Process procs[], int n) {
     State s;
     init_state(&s, n);
     
