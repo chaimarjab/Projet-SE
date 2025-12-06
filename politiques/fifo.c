@@ -1,11 +1,78 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "process.h"
+#include "gui.h"
 
 // FIFO = First Come First Served (pas de préemption)
 
 void fifo(Process procs[], int n) {
+    
+    // ═══════════════════════════════════════
+    //     MODE CAPTURE POUR GUI
+    // ═══════════════════════════════════════
+    if (capture_mode && current_result) {
+        strcpy(current_result->algo_name, "FIFO");
+        current_result->quantum = 0;
+        current_result->processes = malloc(sizeof(Process) * n);
+        if (!current_result->processes) return;
 
+        // Copier et trier les processus selon l'arrivée
+        for (int i = 0; i < n; i++) {
+            current_result->processes[i] = procs[i];
+        }
+        
+        for (int i = 0; i < n - 1; i++) {
+            for (int j = i + 1; j < n; j++) {
+                if (current_result->processes[j].arrival < current_result->processes[i].arrival) {
+                    Process tmp = current_result->processes[i];
+                    current_result->processes[i] = current_result->processes[j];
+                    current_result->processes[j] = tmp;
+                }
+            }
+        }
+
+        // Simuler l'ordonnancement
+        int time = 0;
+        current_result->timeline_len = 0;
+        
+        for (int i = 0; i < n; i++) {
+            Process *p = &current_result->processes[i];
+            
+            // CPU Idle si nécessaire
+            while (time < p->arrival) {
+                current_result->timeline[current_result->timeline_len++] = -1;
+                time++;
+            }
+            
+            // Exécuter le processus
+            current_result->start[i] = time;
+            for (int d = 0; d < p->duration; d++) {
+                current_result->timeline[current_result->timeline_len++] = i;
+                time++;
+            }
+            current_result->end[i] = time;
+        }
+        
+        // Calculer les statistiques
+        float sumT = 0, sumW = 0;
+        for (int i = 0; i < n; i++) {
+            current_result->turnaround[i] = current_result->end[i] - current_result->processes[i].arrival;
+            current_result->wait[i] = current_result->start[i] - current_result->processes[i].arrival;
+            sumT += current_result->turnaround[i];
+            sumW += current_result->wait[i];
+        }
+        
+        current_result->avg_turnaround = sumT / n;
+        current_result->avg_wait = sumW / n;
+        current_result->process_count = n;
+        
+        return; // Ne pas afficher en console
+    }
+    
+    // ═══════════════════════════════════════
+    //     MODE CONSOLE (ORIGINAL)
+    // ═══════════════════════════════════════
     printf("\n═══════════════════════════════════════════════════\n");
     printf("                 ORDONNANCEMENT FIFO\n");
     printf("═══════════════════════════════════════════════════\n\n");
@@ -41,9 +108,7 @@ void fifo(Process procs[], int n) {
         end[i] = time;
     }
 
-    // ═══════════════════════════════════════
-    //          CHRONOLOGIE
-    // ═══════════════════════════════════════
+    // CHRONOLOGIE
     printf("CHRONOLOGIE D'EXÉCUTION:\n");
     printf("─────────────────────────\n");
 
@@ -55,9 +120,7 @@ void fifo(Process procs[], int n) {
         if ((t + 1) % 8 == 0) printf("\n");
     }
 
-    // ═══════════════════════════════════════
-    //          GANTT
-    // ═══════════════════════════════════════
+    // GANTT
     printf("\n\nDIAGRAMME DE GANTT:\n");
     printf("───────────────────\n");
 
@@ -73,9 +136,7 @@ void fifo(Process procs[], int n) {
         printf("\n");
     }
 
-    // ═══════════════════════════════════════
-    //          STATISTIQUES
-    // ═══════════════════════════════════════
+    // STATISTIQUES
     printf("\nSTATISTIQUES DES PROCESSUS:\n");
     printf("┌──────┬─────────┬───────┬─────────┬───────┬─────┬────────────┬─────────┐\n");
     printf("│ Proc │ Arrivée │ Durée │ Début   │ Fin   │ TR  │ Turnaround │ Attente │\n");
