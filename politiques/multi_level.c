@@ -274,10 +274,10 @@ void multi_level(Process procs[], int n) {
     printf("║     ORDONNANCEMENT MULTI-NIVEAUX À PRIORITÉS DYNAMIQUES               ║\n");
     printf("╠═══════════════════════════════════════════════════════════════════════╣\n");
     printf("║ RÈGLES:                                                               ║\n");
-    printf("║  • Quantum: Priorité 5,4 → 1 | Priorité 3,2 → 2 | Priorité 1,0 → 4   ║\n");
-    printf("║  • Priorité -1 UNIQUEMENT si quantum TERMINÉ (jamais < 0)            ║\n");
-    printf("║  • Préemption si processus plus prioritaire arrive (prio inchangée)  ║\n");
-    printf("║  • Anti-famine: attente ≥%d unités → priorité +1 (max 5)              ║\n", FAMINE_THRESHOLD);
+    printf("║  • Quantum: Priorité 5,4 → 1 | Priorité 3,2 → 2 | Priorité 1,0 → 4    ║\n");
+    printf("║  • Priorité -1 UNIQUEMENT si quantum TERMINÉ (jamais < 0)             ║\n");
+    printf("║  • Préemption si processus plus prioritaire arrive (prio inchangée)   ║\n");
+    printf("║  • Anti-famine: attente ≥%d unités → priorité +1 (max 5)               ║\n", FAMINE_THRESHOLD);
     printf("╚═══════════════════════════════════════════════════════════════════════╝\n\n");
     
     printf("PROCESSUS EN ENTRÉE:\n");
