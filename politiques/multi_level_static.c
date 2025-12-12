@@ -162,18 +162,33 @@ void multi_level_static(Process procs[], int n) {
         return; /* IMPORTANT : ne pas afficher en console en mode GTK */
     }
 
-    /* -------------- MODE CONSOLE (identique à ce que tu avais) -------------- */
-    printf("\nMULTI LEVEL STATIC (Round Robin par niveau)\n");
-    printf("═══════════════════════════════════════════════════\n\n");
-
-    printf("Mapping Priorité -> Niveau (Auto):\n");
-    for (int i = 0; i < n; i++) printf("Processus %s : Priorité = %d -> Niveau = %d\n",
-                                       procs[i].name, procs[i].priority, level[i]);
+    /* -------------- MODE CONSOLE (AFFICHAGE AMÉLIORÉ) -------------- */
     printf("\n");
+    printf("╔═══════════════════════════════════════════════════════════════════════╗\n");
+    printf("║     ORDONNANCEMENT MULTI-NIVEAUX STATIQUE (ROUND ROBIN)               ║\n");
+    printf("╠═══════════════════════════════════════════════════════════════════════╣\n");
+    printf("║ RÈGLES:                                                               ║\n");
+    printf("║  • Quantum fixe: %d unités pour tous les processus                     ║\n", QUANTUM_RR);
+    printf("║  • Priorités statiques (pas de changement dynamique)                  ║\n");
+    printf("║  • Round Robin par niveau de priorité                                 ║\n");
+    printf("║  • Préemption entre niveaux (haute priorité d'abord)                  ║\n");
+    printf("╚═══════════════════════════════════════════════════════════════════════╝\n\n");
+
+    printf("PROCESSUS EN ENTRÉE:\n");
+    printf("┌──────┬─────────┬───────┬──────────┬─────────┐\n");
+    printf("│ Nom  │ Arrivée │ Durée │ Priorité │ Niveau  │\n");
+    printf("├──────┼─────────┼───────┼──────────┼─────────┤\n");
+    for (int i = 0; i < n; i++)
+        printf("│ %-4s │ %7d │ %5d │ %8d │ %7d │\n", 
+               procs[i].name, procs[i].arrival, procs[i].duration, procs[i].priority, level[i]);
+    printf("└──────┴─────────┴───────┴──────────┴─────────┘\n\n");
+
+    printf("Simulation en cours...\n\n");
 
     /* refaire la simulation pour affichage console (séparée) */
     done = 0; time = 0; timeline_index = 0;
     for (int i = 0; i < n; i++) { remaining[i] = procs[i].duration; start[i] = end[i] = -1; start_done[i] = 0; }
+    for (int l = 0; l < levels; l++) initQueue(&queues[l]);
 
     while (done < n && timeline_index < MAX_TIMELINE) {
         for (int i = 0; i < n; i++) {
@@ -191,7 +206,6 @@ void multi_level_static(Process procs[], int n) {
                 int to_run = (remaining[p] < QUANTUM_RR) ? remaining[p] : QUANTUM_RR;
                 for (int u = 0; u < to_run && timeline_index < MAX_TIMELINE; u++) {
                     timeline[timeline_index++] = p;
-                    printf("[%s] ", procs[p].name);
                     time++;
                     remaining[p]--;
 
@@ -210,12 +224,27 @@ void multi_level_static(Process procs[], int n) {
             }
         }
 
-        if (!executed) { timeline[timeline_index++] = -1; printf("[IDLE] "); time++; }
+        if (!executed) { timeline[timeline_index++] = -1; time++; }
     }
 
-    /* affichage GANTT (console) */
-    printf("\n\nGANTT (premiers 50):\nTime ");
-    for (int t = 0; t <= 50; t++) printf("%2d ", t);
+    /* affichage résultats */
+    printf("\n════════════════════════ RÉSULTATS ════════════════════════\n\n");
+    
+    printf("CHRONOLOGIE D'EXÉCUTION:\n");
+    printf("─────────────────────────\n");
+    for (int t = 0; t < timeline_index; t++) {
+        if (timeline[t] == -1)
+            printf("[IDLE:%d→%d] ", t, t+1);
+        else
+            printf("[%s:%d→%d] ", procs[timeline[t]].name, t, t+1);
+        if ((t + 1) % 8 == 0) printf("\n");
+    }
+    printf("\n\n");
+
+    printf("DIAGRAMME DE GANTT:\n");
+    printf("───────────────────\n");
+    printf("Time ");
+    for (int t = 0; t <= timeline_index && t <= 50; t++) printf("%2d ", t);
     printf("\n");
     for (int i = 0; i < n; i++) {
         printf("%-4s ", procs[i].name);
@@ -224,22 +253,28 @@ void multi_level_static(Process procs[], int n) {
         printf("\n");
     }
 
-    /* statistiques console et préparation pour GUI (optionnel) */
-    printf("\nSTATISTIQUES:\n");
+    printf("\nSTATISTIQUES DES PROCESSUS:\n");
+    printf("┌──────┬─────────┬───────┬──────────┬───────┬─────┬────────────┬─────────┐\n");
+    printf("│ Proc │ Arrivée │ Durée │ Priorité │ Début │ Fin │ Turnaround │ Attente │\n");
+    printf("├──────┼─────────┼───────┼──────────┼───────┼─────┼────────────┼─────────┤\n");
+
     float sumT = 0.0f, sumW = 0.0f;
     for (int i = 0; i < n; i++) {
         int turn = (end[i] >= 0) ? (end[i] - procs[i].arrival) : -1;
         int wait = (turn >= 0) ? (turn - procs[i].duration) : -1;
         if (turn >= 0) { sumT += turn; sumW += wait; }
-        printf("%s Arr=%d Dur=%d Deb=%d Fin=%d Turn=%d Wait=%d\n",
-               procs[i].name, procs[i].arrival, procs[i].duration, start[i], end[i], turn, wait);
+        printf("│ %-4s │ %7d │ %5d │ %8d │ %5d │ %3d │ %10d │ %7d │\n",
+               procs[i].name, procs[i].arrival, procs[i].duration,
+               procs[i].priority, start[i], end[i], turn, wait);
     }
-    printf("\nTemps moyen Rotation = %.2f\n", sumT / n);
-    printf("Temps moyen Attente = %.2f\n", sumW / n);
 
-    /* Optionnel : remplir current_result si l'appelant souhaite l'utiliser après exécution console.
-       gui.c alloue current_result avant d'appeler l'algorithme en mode GTK, mais en exécution pure
-       console current_result peut être NULL — on protège. */
+    printf("└──────┴─────────┴───────┴──────────┴───────┴─────┴────────────┴─────────┘\n");
+    printf("\n");
+    printf("Temps de rotation moyen: %.2f unités\n", sumT / n);
+    printf("Temps d'attente moyen:   %.2f unités\n", sumW / n);
+    printf("Temps total simulation:  %d unités\n", time);
+
+    /* Optionnel : remplir current_result si l'appelant souhaite l'utiliser après exécution console */
     if (current_result) {
         strncpy(current_result->algo_name, "Multi-Level Static", sizeof(current_result->algo_name)-1);
         current_result->algo_name[sizeof(current_result->algo_name)-1] = '\0';
@@ -273,4 +308,3 @@ void multi_level_static(Process procs[], int n) {
 
     free(queues);
 }
-
