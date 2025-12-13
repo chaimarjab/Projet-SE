@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dirent.h>
+#include <dlfcn.h>
 #include "gui.h"
 #include "process.h"
 
@@ -9,6 +11,19 @@
 static Process *g_processes = NULL;
 static int g_process_count = 0;
 static GtkWidget *g_drawing_area = NULL;
+static int selected_algo = 0;
+static int rr_quantum = 2;
+
+// Structures pour stocker les algorithmes détectés
+typedef struct {
+    char filename[200];     // Ex: "fifo.c"
+    char name[200];        // Ex: "fifo"
+    char display_name[200]; // Ex: "FIFO"
+    int needs_quantum;     // 1 si c'est round_robin
+} AlgoInfo;
+
+static AlgoInfo *g_algos = NULL;
+static int g_algo_count = 0;
 
 // Palette de couleurs moderne et professionnelle
 #define BG_PRIMARY      0.09, 0.09, 0.11
@@ -30,7 +45,66 @@ static double process_colors[][3] = {
 // Déclaration forward
 static void show_results_window(GtkWidget *parent_window);
 
+// Charger les algorithmes depuis le dossier politiques
+static void load_algorithms() {
+    DIR *dir = opendir("politiques");
+    if (!dir) {
+        printf("Erreur : impossible d'ouvrir le dossier 'politiques'\n");
+        exit(1);
+    }
+
+    // Allocation initiale
+    g_algos = malloc(sizeof(AlgoInfo) * 50);
+    g_algo_count = 0;
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        // Ignorer . et ..
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        // Ne garder que les .c
+        int len = strlen(entry->d_name);
+        if (len < 3 || strcmp(entry->d_name + len - 2, ".c") != 0)
+            continue;
+
+        // Stocker le nom du fichier
+        strcpy(g_algos[g_algo_count].filename, entry->d_name);
+        
+        // Extraire le nom sans extension
+        strcpy(g_algos[g_algo_count].name, entry->d_name);
+        g_algos[g_algo_count].name[len - 2] = '\0';
+        
+        // Créer le nom d'affichage avec icône
+        if (strcmp(g_algos[g_algo_count].name, "fifo") == 0) {
+            strcpy(g_algos[g_algo_count].display_name, "🚀  FIFO");
+        } else if (strcmp(g_algos[g_algo_count].name, "round_robin") == 0) {
+            strcpy(g_algos[g_algo_count].display_name, "🔄  Round Robin");
+            g_algos[g_algo_count].needs_quantum = 1;
+        } else if (strcmp(g_algos[g_algo_count].name, "priorite") == 0) {
+            strcpy(g_algos[g_algo_count].display_name, "⭐  Priorité");
+        } else if (strcmp(g_algos[g_algo_count].name, "multi_level") == 0) {
+            strcpy(g_algos[g_algo_count].display_name, "🏢  Multi-Level");
+        } else if (strcmp(g_algos[g_algo_count].name, "multi_level_static") == 0) {
+            strcpy(g_algos[g_algo_count].display_name, "🏢  Multi-Level Static");
+        } else {
+            // Nom générique pour les autres algorithmes (limiter la taille)
+            char safe_name[180];
+            strncpy(safe_name, g_algos[g_algo_count].name, sizeof(safe_name) - 1);
+            safe_name[sizeof(safe_name) - 1] = '\0';
+            snprintf(g_algos[g_algo_count].display_name, 200, "⚙️  %s", safe_name);
+        }
+        
+        g_algo_count++;
+    }
+
+    closedir(dir);
+    
+    printf("✓ %d algorithmes détectés dans le dossier 'politiques'\n", g_algo_count);
+}
+
 static gboolean on_draw_gantt(GtkWidget *widget, cairo_t *cr, gpointer data) {
+    (void)data;
     if (!current_result || !current_result->processes) return FALSE;
     
     int width = gtk_widget_get_allocated_width(widget);
@@ -253,10 +327,10 @@ static GtkWidget* create_timeline_view() {
         char entry[150];
         
         if (current_result->timeline[t] == -1) {
-            snprintf(entry, sizeof(entry), "[IDLE:%d->%d]  ", t, t+1);
+            snprintf(entry, sizeof(entry), "[IDLE:%d→%d]  ", t, t+1);
         } else {
             int proc_idx = current_result->timeline[t];
-            snprintf(entry, sizeof(entry), "[%s:%d->%d]  ", 
+            snprintf(entry, sizeof(entry), "[%s:%d→%d]  ", 
                     current_result->processes[proc_idx].name, t, t+1);
         }
         
@@ -286,7 +360,7 @@ static GtkWidget* create_timeline_view() {
     float cpu_utilization = ((float)(current_result->timeline_len - idle_count) / current_result->timeline_len) * 100.0;
     
     GtkWidget *stats_label = gtk_label_new(NULL);
-    char stats[400];
+    char stats[800];
     snprintf(stats, sizeof(stats),
         "<span font='12'>\n"
         "<span foreground='#52D69C'><b>📊 Métriques de Performance</b></span>\n\n"
@@ -458,9 +532,52 @@ static void show_results_window(GtkWidget *parent_window) {
     gtk_widget_show_all(result_window);
 }
 
-static void on_run_fifo(GtkWidget *widget, gpointer data) {
+// Callback pour les radio buttons
+static void on_algo_selected(GtkWidget *widget, gpointer data) {
+    if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget))) {
+        selected_algo = GPOINTER_TO_INT(data);
+    }
+}
+
+// Callback pour le bouton exécuter
+static void on_execute_algo(GtkWidget *widget, gpointer data) {
+    (void)widget;
     GtkWidget *window = GTK_WIDGET(data);
     
+    // Si Round Robin est sélectionné, demander le quantum
+    if (g_algos[selected_algo].needs_quantum) {
+        GtkWidget *dialog = gtk_dialog_new_with_buttons(
+            "Configuration Round Robin", GTK_WINDOW(window),
+            GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+            "Annuler", GTK_RESPONSE_CANCEL, "OK", GTK_RESPONSE_OK, NULL);
+        
+        GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+        gtk_widget_set_margin_start(content, 30);
+        gtk_widget_set_margin_end(content, 30);
+        gtk_widget_set_margin_top(content, 25);
+        gtk_widget_set_margin_bottom(content, 25);
+        
+        GtkWidget *label = gtk_label_new(NULL);
+        gtk_label_set_markup(GTK_LABEL(label), 
+            "<span font='13' foreground='#F2F5F9'>Quantum (unités de temps) :</span>");
+        gtk_box_pack_start(GTK_BOX(content), label, FALSE, FALSE, 10);
+        
+        GtkWidget *spin = gtk_spin_button_new_with_range(1, 100, 1);
+        gtk_spin_button_set_value(GTK_SPIN_BUTTON(spin), rr_quantum);
+        gtk_box_pack_start(GTK_BOX(content), spin, FALSE, FALSE, 10);
+        
+        gtk_widget_show_all(dialog);
+        
+        int response = gtk_dialog_run(GTK_DIALOG(dialog));
+        if (response == GTK_RESPONSE_OK) {
+            rr_quantum = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(spin));
+        }
+        gtk_widget_destroy(dialog);
+        
+        if (response != GTK_RESPONSE_OK) return;
+    }
+    
+    // Libérer l'ancien résultat
     if (current_result) {
         if (current_result->processes) free(current_result->processes);
         free(current_result);
@@ -470,218 +587,299 @@ static void on_run_fifo(GtkWidget *widget, gpointer data) {
     if (!current_result) return;
     
     capture_mode = 1;
-    fifo(g_processes, g_process_count);
-    capture_mode = 0;
     
-    show_results_window(window);
-}
-
-static void on_run_priorite(GtkWidget *widget, gpointer data) {
-    GtkWidget *window = GTK_WIDGET(data);
+    // Compiler et exécuter l'algorithme sélectionné dynamiquement
+    char path[300];
+    char lib[300];
     
-    if (current_result) {
-        if (current_result->processes) free(current_result->processes);
-        free(current_result);
+    snprintf(path, sizeof(path), "politiques/%s", g_algos[selected_algo].filename);
+    snprintf(lib, sizeof(lib), "politiques/%s.so", g_algos[selected_algo].filename);
+    
+    // Nettoyer l'ancien .so
+    remove(lib);
+    
+    // Compilation dynamique
+    char cmd[800];
+    snprintf(cmd, sizeof(cmd),
+             "gcc -shared -fPIC -Isrc %s -o %s 2>/dev/null",
+             path, lib);
+    
+    if (system(cmd) != 0) {
+        printf("Erreur lors de la compilation de %s\n", g_algos[selected_algo].name);
+        capture_mode = 0;
+        return;
     }
     
-    current_result = malloc(sizeof(SchedulingResult));
-    if (!current_result) return;
-    
-    capture_mode = 1;
-    priorite(g_processes, g_process_count);
-    capture_mode = 0;
-    
-    show_results_window(window);
-}
-
-static void on_run_round_robin(GtkWidget *widget, gpointer data) {
-    GtkWidget *window = GTK_WIDGET(data);
-    
-    GtkWidget *dialog = gtk_dialog_new_with_buttons(
-        "Round Robin", GTK_WINDOW(window),
-        GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
-        "Annuler", GTK_RESPONSE_CANCEL, "Exécuter", GTK_RESPONSE_OK, NULL);
-    
-    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
-    gtk_widget_set_margin_start(content, 30);
-    gtk_widget_set_margin_end(content, 30);
-    gtk_widget_set_margin_top(content, 25);
-    gtk_widget_set_margin_bottom(content, 25);
-    
-    GtkWidget *label = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(label), "<span font='13'>Quantum :</span>");
-    gtk_box_pack_start(GTK_BOX(content), label, FALSE, FALSE, 10);
-    
-    GtkWidget *spin = gtk_spin_button_new_with_range(1, 100, 1);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(spin), 2);
-    gtk_box_pack_start(GTK_BOX(content), spin, FALSE, FALSE, 10);
-    
-    gtk_widget_show_all(dialog);
-    
-    int response = gtk_dialog_run(GTK_DIALOG(dialog));
-    int quantum = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(spin));
-    gtk_widget_destroy(dialog);
-    
-    if (response != GTK_RESPONSE_OK) return;
-    
-    if (current_result) {
-        if (current_result->processes) free(current_result->processes);
-        free(current_result);
+    // Charger la bibliothèque
+    void *handle = dlopen(lib, RTLD_NOW);
+    if (!handle) {
+        printf("Erreur dlopen: %s\n", dlerror());
+        capture_mode = 0;
+        return;
     }
     
-    current_result = malloc(sizeof(SchedulingResult));
-    if (!current_result) return;
+    printf("\n>>> Exécution de : %s\n", g_algos[selected_algo].name);
     
-    capture_mode = 1;
-    round_robin(g_processes, g_process_count, quantum);
-    capture_mode = 0;
-    
-    show_results_window(window);
-}
-
-static void on_run_multilevel(GtkWidget *widget, gpointer data) {
-    GtkWidget *window = GTK_WIDGET(data);
-    
-    if (current_result) {
-        if (current_result->processes) free(current_result->processes);
-        free(current_result);
+    // Exécuter selon le type
+    if (g_algos[selected_algo].needs_quantum) {
+        // Round Robin avec quantum
+        void (*rr_func)(Process*, int, int) = dlsym(handle, g_algos[selected_algo].name);
+        if (!rr_func) {
+            printf("Erreur dlsym: %s\n", dlerror());
+            dlclose(handle);
+            capture_mode = 0;
+            return;
+        }
+        rr_func(g_processes, g_process_count, rr_quantum);
+    } else {
+        // Autres algorithmes
+        void (*alg_func)(Process*, int) = dlsym(handle, g_algos[selected_algo].name);
+        if (!alg_func) {
+            printf("Erreur dlsym: %s\n", dlerror());
+            dlclose(handle);
+            capture_mode = 0;
+            return;
+        }
+        alg_func(g_processes, g_process_count);
     }
     
-    current_result = malloc(sizeof(SchedulingResult));
-    if (!current_result) return;
-    
-    capture_mode = 1;
-    multi_level(g_processes, g_process_count);
+    dlclose(handle);
     capture_mode = 0;
-    
     show_results_window(window);
 }
-
-static void on_run_multilevel_static(GtkWidget *widget, gpointer data) {
-    GtkWidget *window = GTK_WIDGET(data);
-
-    if (current_result) {
-        if (current_result->processes) free(current_result->processes);
-        free(current_result);
-    }
-
-    current_result = malloc(sizeof(SchedulingResult));
-    if (!current_result) return;
-
-    capture_mode = 1;
-    multi_level_static(g_processes, g_process_count);  // Appel à ton algorithme
-    capture_mode = 0;
-
-    show_results_window(window);
-}
-
-
 
 void lancer_interface_gtk(Process procs[], int count) {
     g_processes = procs;
     g_process_count = count;
     
+    // Charger les algorithmes disponibles
+    load_algorithms();
+    
+    if (g_algo_count == 0) {
+        printf("Erreur : aucun algorithme trouvé dans le dossier 'politiques'\n");
+        exit(1);
+    }
+    
     gtk_init(NULL, NULL);
     
     GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(window), "Ordonnanceur de Processus");
-    gtk_window_set_default_size(GTK_WINDOW(window), 900, 750);
+    gtk_window_set_default_size(GTK_WINDOW(window), 950, 800);
     gtk_window_set_position(GTK_WINDOW(window), GTK_WIN_POS_CENTER);
     
     GtkCssProvider *css_provider = gtk_css_provider_new();
     gtk_css_provider_load_from_data(css_provider,
-        "window { background: linear-gradient(135deg, #171719 0%, #1F2026 50%, #171719 100%); }"
+        "window { "
+        "  background: linear-gradient(135deg, #0F0F11 0%, #1A1B1E 50%, #0F0F11 100%); "
+        "}"
         "box { background-color: transparent; }"
+        ".algo-card { "
+        "  background: linear-gradient(135deg, #1E1F26 0%, #25262E 100%); "
+        "  border: 1px solid #35363F; "
+        "  border-radius: 12px; "
+        "  padding: 18px; "
+        "  margin: 8px; "
+        "}"
+        ".algo-card:hover { "
+        "  background: linear-gradient(135deg, #252631 0%, #2C2D36 100%); "
+        "  border-color: #57A4FA; "
+        "  box-shadow: 0 4px 20px rgba(87, 164, 250, 0.15); "
+        "}"
+        "radiobutton { "
+        "  color: #F2F5F9; "
+        "  font-size: 13px; "
+        "  font-weight: 600; "
+        "}"
+        "radiobutton:checked { color: #57A4FA; }"
         "button { "
         "  background: linear-gradient(135deg, #57A4FA 0%, #4891E6 100%); "
-        "  color: #FFFFFF; border: none; border-radius: 12px; "
-        "  padding: 16px 28px; font-weight: 700; font-size: 14px; "
-        "  box-shadow: 0 6px 20px rgba(87, 164, 250, 0.35); "
+        "  color: #FFFFFF; "
+        "  border: none; "
+        "  border-radius: 14px; "
+        "  padding: 18px 40px; "
+        "  font-weight: 700; "
+        "  font-size: 16px; "
+        "  box-shadow: 0 8px 25px rgba(87, 164, 250, 0.4); "
         "}"
-        "button:hover { background: linear-gradient(135deg, #6BB3FF 0%, #57A4FA 100%); }"
-        "label { color: #F2F5F9; }", -1, NULL);
+        "button:hover { "
+        "  background: linear-gradient(135deg, #6BB3FF 0%, #57A4FA 100%); "
+        "  box-shadow: 0 10px 30px rgba(87, 164, 250, 0.5); "
+        "}"
+        "label { color: #F2F5F9; }"
+        "separator { background: #35363F; min-height: 1px; }", -1, NULL);
     gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),
         GTK_STYLE_PROVIDER(css_provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     
-    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 25);
-    gtk_widget_set_margin_start(vbox, 50);
-    gtk_widget_set_margin_end(vbox, 50);
-    gtk_widget_set_margin_top(vbox, 50);
-    gtk_widget_set_margin_bottom(vbox, 50);
+    GtkWidget *main_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     
-    GtkWidget *header_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    // Header avec gradient
+    GtkWidget *header_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_set_margin_start(header_box, 50);
+    gtk_widget_set_margin_end(header_box, 50);
+    gtk_widget_set_margin_top(header_box, 45);
+    gtk_widget_set_margin_bottom(header_box, 35);
     
     GtkWidget *title = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(title),
-        "<span font='32' weight='bold' foreground='#57A4FA'>"
-        "⚡ Ordonnanceur de Processus</span>");
+        "<span font='34' weight='bold'>"
+        "<span foreground='#57A4FA'>⚡</span> "
+        "<span foreground='#F2F5F9'>Ordonnanceur</span> "
+        "<span foreground='#9E82FA'>de Processus</span>"
+        "</span>");
     gtk_box_pack_start(GTK_BOX(header_box), title, FALSE, FALSE, 0);
     
     GtkWidget *subtitle = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(subtitle),
-        "<span font='13' foreground='#9E82FA'>"
-        "Simulation et analyse d'algorithmes d'ordonnancement CPU</span>");
+        "<span font='13' foreground='#A6AEC0'>"
+        "Simulation et analyse avancée d'algorithmes d'ordonnancement CPU"
+        "</span>");
     gtk_box_pack_start(GTK_BOX(header_box), subtitle, FALSE, FALSE, 0);
     
-    gtk_box_pack_start(GTK_BOX(vbox), header_box, FALSE, FALSE, 0);
-    
-    char info[250];
+    char info[300];
     snprintf(info, sizeof(info),
-        "<span font='13'><span foreground='#52D69C'>●</span> "
-        "<span foreground='#F2F5F9' weight='600'>%d processus chargés</span></span>", count);
+        "<span font='12'>"
+        "<span foreground='#52D69C' weight='bold'>●</span> "
+        "<span foreground='#E8EAED'>%d processus chargés</span> "
+        "<span foreground='#7A7D87'>|</span> "
+        "<span foreground='#FAB04F'>●</span> "
+        "<span foreground='#E8EAED'>%d algorithmes disponibles</span>"
+        "</span>", count, g_algo_count);
     GtkWidget *info_label = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(info_label), info);
-    gtk_box_pack_start(GTK_BOX(vbox), info_label, FALSE, FALSE, 5);
+    gtk_box_pack_start(GTK_BOX(header_box), info_label, FALSE, FALSE, 5);
     
-    GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_box_pack_start(GTK_BOX(vbox), sep, FALSE, FALSE, 15);
+    gtk_box_pack_start(GTK_BOX(main_vbox), header_box, FALSE, FALSE, 0);
     
-    GtkWidget *algo_label = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(algo_label),
-        "<span font='15' foreground='#F2F5F9' weight='600'>"
-        "Sélectionnez un algorithme</span>");
-    gtk_box_pack_start(GTK_BOX(vbox), algo_label, FALSE, FALSE, 10);
+    GtkWidget *sep1 = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_box_pack_start(GTK_BOX(main_vbox), sep1, FALSE, FALSE, 0);
     
-    GtkWidget *btn_fifo = gtk_button_new_with_label("🚀  FIFO");
-    gtk_widget_set_size_request(btn_fifo, 500, 65);
-    gtk_widget_set_halign(btn_fifo, GTK_ALIGN_CENTER);
-    g_signal_connect(btn_fifo, "clicked", G_CALLBACK(on_run_fifo), window);
-    gtk_box_pack_start(GTK_BOX(vbox), btn_fifo, FALSE, FALSE, 8);
+    // Section des algorithmes
+    GtkWidget *content_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 20);
+    gtk_widget_set_margin_start(content_box, 50);
+    gtk_widget_set_margin_end(content_box, 50);
+    gtk_widget_set_margin_top(content_box, 30);
+    gtk_widget_set_margin_bottom(content_box, 35);
     
-    GtkWidget *btn_rr = gtk_button_new_with_label("🔄  Round Robin");
-    gtk_widget_set_size_request(btn_rr, 500, 65);
-    gtk_widget_set_halign(btn_rr, GTK_ALIGN_CENTER);
-    g_signal_connect(btn_rr, "clicked", G_CALLBACK(on_run_round_robin), window);
-    gtk_box_pack_start(GTK_BOX(vbox), btn_rr, FALSE, FALSE, 8);
+    GtkWidget *algo_title = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(algo_title),
+        "<span font='17' foreground='#F2F5F9' weight='bold'>"
+        "Sélection de l'algorithme"
+        "</span>");
+    gtk_widget_set_halign(algo_title, GTK_ALIGN_START);
+    gtk_box_pack_start(GTK_BOX(content_box), algo_title, FALSE, FALSE, 5);
     
-    GtkWidget *btn_priorite = gtk_button_new_with_label("⭐  Priorité");
-    gtk_widget_set_size_request(btn_priorite, 500, 65);
-    gtk_widget_set_halign(btn_priorite, GTK_ALIGN_CENTER);
-    g_signal_connect(btn_priorite, "clicked", G_CALLBACK(on_run_priorite), window);
-    gtk_box_pack_start(GTK_BOX(vbox), btn_priorite, FALSE, FALSE, 8);
+    GtkWidget *algo_subtitle = gtk_label_new(NULL);
+    char subtitle_text[400]; // Augmentation de la taille du buffer
     
-    GtkWidget *btn_multilevel = gtk_button_new_with_label("🏢  Multi-Level");
-    gtk_widget_set_size_request(btn_multilevel, 500, 65);
-    gtk_widget_set_halign(btn_multilevel, GTK_ALIGN_CENTER);
-    g_signal_connect(btn_multilevel, "clicked", G_CALLBACK(on_run_multilevel), window);
-    gtk_box_pack_start(GTK_BOX(vbox), btn_multilevel, FALSE, FALSE, 8);
+    // Trouver FIFO dans la liste
+    int fifo_index = 0;
+    for (int i = 0; i < g_algo_count; i++) {
+        if (strcmp(g_algos[i].name, "fifo") == 0) {
+            fifo_index = i;
+            break;
+        }
+    }
     
-    GtkWidget *btn_multilevel_static = gtk_button_new_with_label("🏢  Multi-Level Static");
-    gtk_widget_set_size_request(btn_multilevel_static, 500, 65);
-    gtk_widget_set_halign(btn_multilevel_static, GTK_ALIGN_CENTER);
-    g_signal_connect(btn_multilevel_static, "clicked",          G_CALLBACK(on_run_multilevel_static), window);
-    gtk_box_pack_start(GTK_BOX(vbox), btn_multilevel_static, FALSE, FALSE, 8);
-
-
+    // Limiter la taille du nom affiché
+    char safe_display_name[100];
+    strncpy(safe_display_name, g_algos[fifo_index].display_name, sizeof(safe_display_name) - 1);
+    safe_display_name[sizeof(safe_display_name) - 1] = '\0';
     
-    gtk_container_add(GTK_CONTAINER(window), vbox);
+    snprintf(subtitle_text, sizeof(subtitle_text),
+        "<span font='11' foreground='#7A7D87'>"
+        "Choisissez un algorithme d'ordonnancement ci-dessous (%s par défaut)"
+        "</span>", safe_display_name);
+    gtk_label_set_markup(GTK_LABEL(algo_subtitle), subtitle_text);
+    gtk_widget_set_halign(algo_subtitle, GTK_ALIGN_START);
+    gtk_box_pack_start(GTK_BOX(content_box), algo_subtitle, FALSE, FALSE, 0);
+    
+    // Container pour les cartes d'algorithmes
+    GtkWidget *algos_grid = gtk_grid_new();
+    gtk_grid_set_column_spacing(GTK_GRID(algos_grid), 15);
+    gtk_grid_set_row_spacing(GTK_GRID(algos_grid), 15);
+    gtk_widget_set_margin_top(algos_grid, 20);
+    
+    // Créer les radio buttons dynamiquement
+    GSList *radio_group = NULL;
+    
+    for (int i = 0; i < g_algo_count; i++) {
+        // Créer une carte pour chaque algorithme
+        GtkWidget *card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+        GtkStyleContext *context = gtk_widget_get_style_context(card);
+        gtk_style_context_add_class(context, "algo-card");
+        
+        GtkWidget *radio = gtk_radio_button_new_with_label(radio_group, g_algos[i].display_name);
+        radio_group = gtk_radio_button_get_group(GTK_RADIO_BUTTON(radio));
+        
+        // Sélectionner FIFO par défaut
+        if (i == fifo_index) {
+            gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(radio), TRUE);
+            selected_algo = i;
+        }
+        
+        g_signal_connect(radio, "toggled", G_CALLBACK(on_algo_selected), GINT_TO_POINTER(i));
+        
+        // Description générique pour les algorithmes
+        const char *description = "Algorithme d'ordonnancement";
+        if (strcmp(g_algos[i].name, "fifo") == 0) {
+            description = "Premier arrivé, premier servi";
+        } else if (strcmp(g_algos[i].name, "round_robin") == 0) {
+            description = "Temps de CPU partagé équitablement";
+        } else if (strcmp(g_algos[i].name, "priorite") == 0) {
+            description = "Exécution par ordre de priorité";
+        } else if (strcmp(g_algos[i].name, "multi_level") == 0) {
+            description = "Files multiples avec feedback";
+        } else if (strcmp(g_algos[i].name, "multi_level_static") == 0) {
+            description = "Files multiples sans feedback";
+        }
+        
+        GtkWidget *desc_label = gtk_label_new(NULL);
+        char desc_markup[300];
+        snprintf(desc_markup, sizeof(desc_markup),
+            "<span font='10' foreground='#9BA1B0'>%s</span>", description);
+        gtk_label_set_markup(GTK_LABEL(desc_label), desc_markup);
+        gtk_widget_set_halign(desc_label, GTK_ALIGN_START);
+        gtk_widget_set_margin_start(desc_label, 25);
+        
+        gtk_box_pack_start(GTK_BOX(card), radio, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(card), desc_label, FALSE, FALSE, 0);
+        
+        int row = i / 2;
+        int col = i % 2;
+        gtk_grid_attach(GTK_GRID(algos_grid), card, col, row, 1, 1);
+        gtk_widget_set_hexpand(card, TRUE);
+    }
+    
+    gtk_box_pack_start(GTK_BOX(content_box), algos_grid, FALSE, FALSE, 0);
+    
+    // Séparateur
+    GtkWidget *sep2 = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_widget_set_margin_top(sep2, 15);
+    gtk_widget_set_margin_bottom(sep2, 15);
+    gtk_box_pack_start(GTK_BOX(content_box), sep2, FALSE, FALSE, 0);
+    
+    // Bouton exécuter
+    GtkWidget *execute_btn = gtk_button_new_with_label("▶  Exécuter l'algorithme");
+    gtk_widget_set_size_request(execute_btn, 400, 60);
+    gtk_widget_set_halign(execute_btn, GTK_ALIGN_CENTER);
+    g_signal_connect(execute_btn, "clicked", G_CALLBACK(on_execute_algo), window);
+    gtk_box_pack_start(GTK_BOX(content_box), execute_btn, FALSE, FALSE, 10);
+    
+    gtk_box_pack_start(GTK_BOX(main_vbox), content_box, TRUE, TRUE, 0);
+    
+    gtk_container_add(GTK_CONTAINER(window), main_vbox);
     g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
     
     gtk_widget_show_all(window);
     gtk_main();
     
+    // Nettoyage
     if (current_result) {
         if (current_result->processes) free(current_result->processes);
         free(current_result);
+    }
+    
+    if (g_algos) {
+        free(g_algos);
     }
 }
