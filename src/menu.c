@@ -3,6 +3,7 @@
 #include <string.h>
 #include <dirent.h>
 #include <dlfcn.h>
+#include <ctype.h>
 #include "menu.h"
 #include "process.h"
 
@@ -66,6 +67,38 @@ void afficher_policies() {
 }
 
 /* -----------------------------------------
+   Vérifier si l'entrée est un nombre valide
+------------------------------------------ */
+int est_nombre_valide(const char *str, int *valeur) {
+    // Ignorer les espaces au début
+    while (*str == ' ' || *str == '\t') {
+        str++;
+    }
+    
+    // Vérifier si vide après espaces
+    if (*str == '\0' || *str == '\n') {
+        return 0; // Entrée vide = utiliser défaut
+    }
+    
+    // Vérifier si c'est un nombre
+    char *endptr;
+    long val = strtol(str, &endptr, 10);
+    
+    // Ignorer les espaces à la fin
+    while (*endptr == ' ' || *endptr == '\t' || *endptr == '\n' || *endptr == '\r') {
+        endptr++;
+    }
+    
+    // Si on n'a pas consommé toute la chaîne, ce n'est pas un nombre valide
+    if (*endptr != '\0') {
+        return -1; // Caractères invalides détectés
+    }
+    
+    *valeur = (int)val;
+    return 1; // Nombre valide
+}
+
+/* -----------------------------------------
    Choisir une politique
 ------------------------------------------ */
 int choisir_politique() {
@@ -82,10 +115,22 @@ int choisir_politique() {
     }
 
     printf("\nChoisissez une politique (défaut: FIFO) : ");
-    fgets(input, sizeof(input), stdin);
+    
+    if (fgets(input, sizeof(input), stdin) == NULL) {
+        printf("❌ Erreur de lecture. Utilisation de FIFO par défaut.\n");
+        if (fifo_index != -1) {
+            return fifo_index;
+        } else {
+            printf("Erreur : FIFO non trouvé.\n");
+            exit(1);
+        }
+    }
 
-    // Si l'utilisateur appuie simplement sur Entrée, utiliser FIFO
-    if (input[0] == '\n' || strlen(input) == 1) {
+    // Vérifier la validité de l'entrée
+    int resultat = est_nombre_valide(input, &choix);
+    
+    if (resultat == 0) {
+        // Entrée vide (juste Entrée) → FIFO par défaut
         if (fifo_index != -1) {
             printf("→ FIFO sélectionné par défaut\n");
             return fifo_index;
@@ -94,13 +139,35 @@ int choisir_politique() {
             exit(1);
         }
     }
-
-    if (sscanf(input, "%d", &choix) != 1 || choix < 1 || choix > politique_count) {
-        printf("Choix invalide.\n");
-        exit(1);
+    else if (resultat == -1) {
+        // Caractères invalides détectés (lettres, symboles, etc.)
+        printf("⚠️  Entrée invalide détectée (caractères non numériques).\n");
+        printf("→ FIFO sélectionné par défaut\n");
+        
+        if (fifo_index != -1) {
+            return fifo_index;
+        } else {
+            printf("Erreur : FIFO non trouvé.\n");
+            exit(1);
+        }
     }
-
-    return choix - 1; // index réel
+    else {
+        // Nombre valide détecté, vérifier s'il est dans la plage
+        if (choix < 1 || choix > politique_count) {
+            printf("⚠️  Choix hors limites (%d). Valeurs acceptées : 1-%d\n", choix, politique_count);
+            printf("→ FIFO sélectionné par défaut\n");
+            
+            if (fifo_index != -1) {
+                return fifo_index;
+            } else {
+                printf("Erreur : FIFO non trouvé.\n");
+                exit(1);
+            }
+        }
+        
+        // Choix valide
+        return choix - 1;
+    }
 }
 
 /* -----------------------------------------
