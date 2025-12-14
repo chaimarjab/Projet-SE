@@ -5,13 +5,11 @@
 #include "gui.h"
 #include "console_display.h"
 
-/* ═══════════════════════════════════════════════════════════
-   CORE: Simuler Round Robin et retourner les résultats
-   ═══════════════════════════════════════════════════════════ */
+
 static SimulationResult simulate_round_robin(Process procs[], int n, int QUANTUM) {
     SimulationResult result;
     
-    // Allouer mémoire pour les tableaux locaux
+    
     static int timeline[1000];
     static int start[100];
     static int end[100];
@@ -27,7 +25,7 @@ static SimulationResult simulate_round_robin(Process procs[], int n, int QUANTUM
     result.init_prio = NULL;
     result.levels = NULL;
     
-    // Initialisation
+    
     int time = 0;
     int timeline_len = 0;
     int done = 0;
@@ -40,7 +38,7 @@ static SimulationResult simulate_round_robin(Process procs[], int n, int QUANTUM
         in_queue[i] = 0;
     }
     
-    // Ajouter les processus arrivés à t=0
+   
     for (int i = 0; i < n; i++) {
         if (procs[i].arrival == 0) {
             queue[q_size++] = i;
@@ -48,14 +46,14 @@ static SimulationResult simulate_round_robin(Process procs[], int n, int QUANTUM
         }
     }
     
-    // Simulation
+    
     while (done < n) {
-        // Si la file est vide
+        
         if (q_size == 0) {
             timeline[timeline_len++] = -1;
             time++;
             
-            // Ajouter les processus arrivés
+            
             for (int i = 0; i < n; i++) {
                 if (procs[i].arrival == time && !in_queue[i] && remaining[i] > 0) {
                     queue[q_size++] = i;
@@ -65,18 +63,18 @@ static SimulationResult simulate_round_robin(Process procs[], int n, int QUANTUM
             continue;
         }
         
-        // Retirer le premier processus de la file
+        
         int pid = queue[0];
         for (int i = 0; i < q_size - 1; i++)
             queue[i] = queue[i + 1];
         q_size--;
         in_queue[pid] = 0;
         
-        // Marquer le début si première exécution
+        
         if (start[pid] == -1)
             start[pid] = time;
         
-        // Exécuter pour un quantum
+        
         int quantum_used = 0;
         while (quantum_used < QUANTUM && remaining[pid] > 0) {
             timeline[timeline_len++] = pid;
@@ -84,7 +82,7 @@ static SimulationResult simulate_round_robin(Process procs[], int n, int QUANTUM
             quantum_used++;
             time++;
             
-            // Ajouter les nouveaux arrivants
+           
             for (int i = 0; i < n; i++) {
                 if (procs[i].arrival == time && !in_queue[i] && remaining[i] > 0) {
                     queue[q_size++] = i;
@@ -93,7 +91,7 @@ static SimulationResult simulate_round_robin(Process procs[], int n, int QUANTUM
             }
         }
         
-        // Remettre en file ou terminer
+        
         if (remaining[pid] > 0) {
             queue[q_size++] = pid;
             in_queue[pid] = 1;
@@ -109,9 +107,7 @@ static SimulationResult simulate_round_robin(Process procs[], int n, int QUANTUM
     return result;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   HELPER: Copier les résultats vers la structure GUI
-   ═══════════════════════════════════════════════════════════ */
+
 static void copy_to_gui_result(SimulationResult *result, int QUANTUM) {
     if (!current_result) return;
     
@@ -119,7 +115,7 @@ static void copy_to_gui_result(SimulationResult *result, int QUANTUM) {
     current_result->quantum = QUANTUM;
     current_result->process_count = result->n;
     
-    // Copier les processus
+    
     current_result->processes = malloc(sizeof(Process) * result->n);
     if (!current_result->processes) {
         fprintf(stderr, "Erreur: malloc échoué pour processes\n");
@@ -130,19 +126,19 @@ static void copy_to_gui_result(SimulationResult *result, int QUANTUM) {
         current_result->processes[i] = result->procs[i];
     }
     
-    // Copier la timeline
+    
     current_result->timeline_len = result->timeline_len;
     for (int i = 0; i < result->timeline_len; i++) {
         current_result->timeline[i] = result->timeline[i];
     }
     
-    // Copier start/end
+    
     for (int i = 0; i < result->n; i++) {
         current_result->start[i] = result->start[i];
         current_result->end[i] = result->end[i];
     }
     
-    // Calculer moyennes
+    
     float sumT = 0.0f, sumW = 0.0f;
     for (int i = 0; i < result->n; i++) {
         current_result->turnaround[i] = result->end[i] - result->procs[i].arrival;
@@ -155,19 +151,16 @@ static void copy_to_gui_result(SimulationResult *result, int QUANTUM) {
     current_result->avg_wait = sumW / result->n;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   MAIN: Point d'entrée Round Robin (GUI ou Console)
-   ═══════════════════════════════════════════════════════════ */
 void round_robin(Process procs[], int n, int QUANTUM) {
-    // ★★★ UNE SEULE SIMULATION ★★★
+    
     SimulationResult result = simulate_round_robin(procs, n, QUANTUM);
     
-    // Router selon le mode
+    
     if (capture_mode && current_result) {
-        // Mode GUI: copier vers current_result
+        
         copy_to_gui_result(&result, QUANTUM);
     } else {
-        // Mode Console: afficher directement
+       
         display_console_results(
             "ROUND ROBIN",
             QUANTUM,
