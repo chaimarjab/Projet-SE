@@ -190,8 +190,8 @@ void executer_politique(int index, Process procs[], int count) {
     // Compilation dynamique
     char cmd[800];
     snprintf(cmd, sizeof(cmd),
-             "gcc -shared -fPIC -Isrc %s -o %s",
-             path, lib);
+         "gcc -shared -fPIC -Isrc %s src/console_display.c -o %s",
+         path, lib);
 
     system(cmd);
 
@@ -205,8 +205,7 @@ void executer_politique(int index, Process procs[], int count) {
     // Nom de la fonction = nom du fichier sans .c
     char func_name[200];
     strcpy(func_name, politiques[index]);
-    func_name[strlen(func_name) - 2] = '\0'; // enlever ".c"
-
+    func_name[strlen(func_name) - 2] = '\0'; // enlever ".c
     printf("\n>>> Exécution de : %s\n", func_name);
 
     /* ----------------------------
